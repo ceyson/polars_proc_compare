@@ -262,21 +262,16 @@ class DataCompare:
 
             # Create chunks using streaming windows
             chunks = []
-            total_rows = min(len(self.base_df), len(self.compare_df))
+            max_rows = max(len(self.base_df), len(self.compare_df))
 
-            for i in range(0, total_rows, self.chunk_size):
-                end_idx = min(i + self.chunk_size, total_rows)
-                base_chunk = base_lazy.slice(i, end_idx - i)
-                compare_chunk = compare_lazy.slice(i, end_idx - i)
+            for i in range(0, max_rows, self.chunk_size):
+                end_idx = min(i + self.chunk_size, max_rows)
+                base_end = min(end_idx, len(self.base_df))
+                compare_end = min(end_idx, len(self.compare_df))
+
+                base_chunk = base_lazy.slice(i, base_end - i) if i < len(self.base_df) else pl.DataFrame().lazy()
+                compare_chunk = compare_lazy.slice(i, compare_end - i) if i < len(self.compare_df) else pl.DataFrame().lazy()
                 chunks.append((base_chunk, compare_chunk))
-
-            # Handle any remaining rows in either DataFrame
-            if len(self.base_df) > total_rows:
-                remaining = self.base_df.slice(total_rows, len(self.base_df) - total_rows).lazy()
-                chunks.append((remaining, pl.DataFrame().lazy()))
-            elif len(self.compare_df) > total_rows:
-                remaining = self.compare_df.slice(total_rows, len(self.compare_df) - total_rows).lazy()
-                chunks.append((pl.DataFrame().lazy(), remaining))
 
             # Process chunks in parallel with dynamic batch size
             n_chunks = len(chunks)
