@@ -185,8 +185,9 @@ class DataCompare:
 
                 if comp_col in merged.columns:
                     # Get column type and determine comparison logic
-                    col_type = str(merged.schema[base_col])
-                    if col_type in ['Float32', 'Float64']:
+                    dtype = merged.schema[base_col]
+                    # Check if column is float type using dtype properties
+                    if dtype.is_float():
                         # For floating point types, use NaN-aware comparison
                         diff_expr = (
                             # Both are NaN - consider equal
