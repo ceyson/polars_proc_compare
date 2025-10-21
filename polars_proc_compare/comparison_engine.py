@@ -186,7 +186,6 @@ class DataCompare:
                 if comp_col in merged.columns:
                     # Get column type and determine comparison logic
                     dtype = merged.schema[base_col]
-                    # Check if column is float type using dtype properties
                     if dtype.is_float():
                         # For floating point types, use NaN-aware comparison
                         diff_expr = (
@@ -197,6 +196,18 @@ class DataCompare:
                                (pl.col(base_col).is_not_nan() & pl.col(comp_col).is_nan()) |
                                # Neither is NaN - compare values
                                (pl.col(base_col).is_not_nan() & pl.col(comp_col).is_not_nan() &
+                                (pl.col(base_col) != pl.col(comp_col))))
+                        )
+                    elif dtype == pl.Utf8:
+                        # For string types, handle nulls explicitly
+                        diff_expr = (
+                            # Both null - consider equal
+                            (pl.col(base_col).is_null() & pl.col(comp_col).is_null()).not_()
+                            # One is null, other isn't - consider different
+                            & ((pl.col(base_col).is_null() & pl.col(comp_col).is_not_null()) |
+                               (pl.col(base_col).is_not_null() & pl.col(comp_col).is_null()) |
+                               # Neither is null - compare values
+                               (pl.col(base_col).is_not_null() & pl.col(comp_col).is_not_null() &
                                 (pl.col(base_col) != pl.col(comp_col))))
                         )
                     else:
