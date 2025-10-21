@@ -198,8 +198,17 @@ class DataCompare:
                 comp_col = f"{col}_compare"
 
                 if comp_col in merged.columns:
-                    # Direct comparison for all types
-                    diff_expr = (pl.col(base_col) != pl.col(comp_col))
+                    # Handle NaN values and direct comparison
+                    diff_expr = (
+                        # Both are NaN - consider equal
+                        (pl.col(base_col).is_nan() & pl.col(comp_col).is_nan()).not_()
+                        # One is NaN, other isn't - consider different
+                        & ((pl.col(base_col).is_nan() & pl.col(comp_col).is_not_nan()) |
+                           (pl.col(base_col).is_not_nan() & pl.col(comp_col).is_nan()) |
+                        # Neither is NaN - compare values
+                           (pl.col(base_col).is_not_nan() & pl.col(comp_col).is_not_nan() & 
+                            (pl.col(base_col) != pl.col(comp_col))))
+                    )
                     diff_rows = merged.filter(diff_expr)
 
                     if len(diff_rows) > 0:
