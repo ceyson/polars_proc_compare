@@ -56,21 +56,7 @@ class DataCompare:
 
     def _normalize_column(self, df: pl.DataFrame, col: str) -> pl.Series:
         """Normalize a column to a consistent type."""
-        series = df[col]
-        col_type = str(df.schema[col])
-
-        if col_type in ['Int32', 'Int64', 'Float32', 'Float64']:
-            return series.cast(pl.Float64)
-        elif col_type == 'Utf8':
-            return series
-        else:
-            # Convert any other type to string using Polars expressions
-            # First convert to Python objects, then to strings
-            return pl.Series(
-                name=col,
-                values=[str(x) for x in series.to_list()],
-                dtype=pl.Utf8
-            )
+        return df[col]  # Return column as-is
 
     def _compare_structure(self) -> Dict:
         """Compare the structure of both DataFrames."""
@@ -198,17 +184,24 @@ class DataCompare:
                 comp_col = f"{col}_compare"
 
                 if comp_col in merged.columns:
-                    # Handle NaN values and direct comparison
-                    diff_expr = (
-                        # Both are NaN - consider equal
-                        (pl.col(base_col).is_nan() & pl.col(comp_col).is_nan()).not_()
-                        # One is NaN, other isn't - consider different
-                        & ((pl.col(base_col).is_nan() & pl.col(comp_col).is_not_nan()) |
-                           (pl.col(base_col).is_not_nan() & pl.col(comp_col).is_nan()) |
-                        # Neither is NaN - compare values
-                           (pl.col(base_col).is_not_nan() & pl.col(comp_col).is_not_nan() & 
-                            (pl.col(base_col) != pl.col(comp_col))))
-                    )
+                    # Get column type and determine comparison logic
+                    col_type = str(merged.schema[base_col])
+                    if col_type in ['Float32', 'Float64']:
+                        # For floating point types, use NaN-aware comparison
+                        diff_expr = (
+                            # Both are NaN - consider equal
+                            (pl.col(base_col).is_nan() & pl.col(comp_col).is_nan()).not_()
+                            # One is NaN, other isn't - consider different
+                            & ((pl.col(base_col).is_nan() & pl.col(comp_col).is_not_nan()) |
+                               (pl.col(base_col).is_not_nan() & pl.col(comp_col).is_nan()) |
+                               # Neither is NaN - compare values
+                               (pl.col(base_col).is_not_nan() & pl.col(comp_col).is_not_nan() &
+                                (pl.col(base_col) != pl.col(comp_col))))
+                        )
+                    else:
+                        # For non-float types (including strings), use simple comparison
+                        diff_expr = (pl.col(base_col) != pl.col(comp_col))
+
                     diff_rows = merged.filter(diff_expr)
 
                     if len(diff_rows) > 0:
