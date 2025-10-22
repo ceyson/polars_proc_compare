@@ -106,15 +106,20 @@ class DataCompare:
                 ])
             )
 
-            # Create observation numbers
+            # Create observation numbers and include key columns if present
             obs_nums = list(range(1, len(diffs) + 1))
-            col_stats["first_n_differences"] = diffs.select([
+            select_cols = [
                 pl.Series("obs", obs_nums),
                 pl.col(base_col).alias("base"),
                 pl.col(comp_col).alias("compare"),
                 pl.col("abs_diff"),
                 pl.col("pct_diff")
-            ]).rows(named=True)
+            ]
+            # Add key columns if present
+            if self.key_columns:
+                for key_col in self.key_columns:
+                    select_cols.append(pl.col(key_col).alias(f"key_{key_col}"))
+            col_stats["first_n_differences"] = diffs.select(select_cols).rows(named=True)
 
             # Calculate overall statistics for non-null values only
             valid_diffs = (
@@ -135,11 +140,16 @@ class DataCompare:
         else:
             # Non-numeric comparisons
             obs_nums = list(range(1, len(sample_diff) + 1))
-            col_stats["first_n_differences"] = sample_diff.select([
+            select_cols = [
                 pl.Series("obs", obs_nums),
                 pl.col(base_col).alias("base"),
                 pl.col(comp_col).alias("compare")
-            ]).rows(named=True)
+            ]
+            # Add key columns if present
+            if self.key_columns:
+                for key_col in self.key_columns:
+                    select_cols.append(pl.col(key_col).alias(f"key_{key_col}"))
+            col_stats["first_n_differences"] = sample_diff.select(select_cols).rows(named=True)
 
         return col_stats
 

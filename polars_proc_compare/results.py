@@ -9,10 +9,13 @@ class ComparisonResults:
         self.structure_results = {}
         self.statistics = {}
         self.total_differences = 0
+        self.key_columns = []  # Store key columns
 
     def set_structure_results(self, results: Dict):
         """Set the structure comparison results."""
         self.structure_results = results
+        # Store key columns if present
+        self.key_columns = results.get('key_columns', [])
 
     def set_comparison_results(self, stats: Dict, total_differences: int):
         """Set the comparison results."""
@@ -126,28 +129,44 @@ Variable: {{ col }}    Type: {{ structure.variable_types.get(col, 'Unknown') }}
         rows = []
         for col, stats in self.statistics.items():
             for diff in stats.get("first_n_differences", []):
-                # Convert all values to strings to ensure consistent types
-                row_data = {
+                # Start with key columns if available
+                row_data = {}
+                
+                # Add key columns and their values if present
+                if hasattr(diff, 'keys') and self.key_columns:
+                    for key_col in self.key_columns:
+                        key_name = f"Key_{key_col}"
+                        key_value = diff.get(f"key_{key_col}", "")
+                        row_data[key_name] = str(key_value) if key_value is not None else ""
+                
+                # Add standard difference information
+                row_data.update({
                     "Variable": str(col),
                     "Observation": str(diff.get("obs", "")),
                     "Base_Value": str(diff.get("base", "")),
                     "Compare_Value": str(diff.get("compare", "")),
                     "Difference": str(diff.get("abs_diff", "")) if diff.get("abs_diff") is not None else "",
                     "Pct_Difference": str(diff.get("pct_diff", "")) if diff.get("pct_diff") is not None else ""
-                }
+                })
                 rows.append(row_data)
 
         # Convert to Polars DataFrame with explicit schema
         if rows:
-            df = pl.DataFrame(
-                rows,
-                schema=[
-                    ("Variable", pl.Utf8),
-                    ("Observation", pl.Utf8),
-                    ("Base_Value", pl.Utf8),
-                    ("Compare_Value", pl.Utf8),
-                    ("Difference", pl.Utf8),
-                    ("Pct_Difference", pl.Utf8)
-                ]
-            )
+            # Build schema with key columns first
+            schema = []
+            if self.key_columns:
+                for key_col in self.key_columns:
+                    schema.append((f"Key_{key_col}", pl.Utf8))
+            
+            # Add standard columns
+            schema.extend([
+                ("Variable", pl.Utf8),
+                ("Observation", pl.Utf8),
+                ("Base_Value", pl.Utf8),
+                ("Compare_Value", pl.Utf8),
+                ("Difference", pl.Utf8),
+                ("Pct_Difference", pl.Utf8)
+            ])
+            
+            df = pl.DataFrame(rows, schema=schema)
             df.write_csv(output_path)
