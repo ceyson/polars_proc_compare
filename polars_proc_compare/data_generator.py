@@ -58,11 +58,10 @@ def create_delta_dataset(
         # Get original values and handle nulls
         series = df[col_name]
         col_dtype = df.schema[col_name]
+        values = series.to_numpy().copy()  # Create a writable copy
 
         # Apply modifications based on data type
         if col_dtype in [pl.Int64, pl.Float64, pl.Int32, pl.Float32]:
-            # Convert to numpy array while preserving nulls
-            values = series.to_numpy().copy()  # Create a writable copy
             mask = ~np.isnan(values)  # Track non-null values
             if col_dtype in [pl.Int64, pl.Int32]:
                 # Only modify non-null values
