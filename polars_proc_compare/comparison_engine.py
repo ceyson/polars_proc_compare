@@ -116,12 +116,22 @@ class DataCompare:
                 pl.col("pct_diff")
             ]).rows(named=True)
 
-            # Calculate overall statistics
-            all_diffs = (diff_rows[comp_col] - diff_rows[base_col]).abs()
-            col_stats.update({
-                "max_diff": float(all_diffs.max()),
-                "mean_diff": float(all_diffs.mean())
-            })
+            # Calculate overall statistics for non-null values only
+            valid_diffs = (
+                diff_rows
+                .filter(pl.col(base_col).is_not_null() & pl.col(comp_col).is_not_null())
+                .select([(pl.col(comp_col) - pl.col(base_col)).abs().alias("diff")])
+            )
+            if len(valid_diffs) > 0:
+                col_stats.update({
+                    "max_diff": float(valid_diffs["diff"].max()),
+                    "mean_diff": float(valid_diffs["diff"].mean())
+                })
+            else:
+                col_stats.update({
+                    "max_diff": None,
+                    "mean_diff": None
+                })
         else:
             # Non-numeric comparisons
             obs_nums = list(range(1, len(sample_diff) + 1))
