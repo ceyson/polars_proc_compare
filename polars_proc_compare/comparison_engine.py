@@ -97,12 +97,13 @@ class DataCompare:
             diffs = (
                 sample_diff
                 .with_columns([
-                    (pl.col(comp_col) - pl.col(base_col))
-                    .alias("abs_diff"),
-                    pl.when(pl.col(base_col) != 0)
-                    .then((pl.col(comp_col) - pl.col(base_col)) / pl.col(base_col) * 100)
-                    .otherwise(None)
-                    .alias("pct_diff")
+                    ((pl.col(comp_col) - pl.col(base_col))
+                     .round(4)
+                     .alias("abs_diff")),
+                    (pl.when(pl.col(base_col) != 0)
+                     .then(((pl.col(comp_col) - pl.col(base_col)) / pl.col(base_col) * 100).round(2))
+                     .otherwise(None)
+                     .alias("pct_diff"))
                 ])
             )
 
@@ -124,8 +125,8 @@ class DataCompare:
             )
             if len(valid_diffs) > 0:
                 col_stats.update({
-                    "max_diff": float(valid_diffs["diff"].max()),
-                    "mean_diff": float(valid_diffs["diff"].mean())
+                    "max_diff": round(float(valid_diffs["diff"].max()), 4),
+                    "mean_diff": round(float(valid_diffs["diff"].mean()), 4)
                 })
             else:
                 col_stats.update({

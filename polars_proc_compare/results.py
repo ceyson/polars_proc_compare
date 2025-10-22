@@ -35,17 +35,56 @@ class ComparisonResults:
         <head>
             <title>Dataset Comparison Report</title>
             <style>
-                body { font-family: monospace; margin: 20px; }
-                pre { margin: 0; }
-                .section { margin-bottom: 30px; white-space: pre; }
+                body { 
+                    font-family: monospace; 
+                    margin: 20px; 
+                    line-height: 1.5;
+                }
+                pre { 
+                    margin: 0; 
+                }
+                .section { 
+                    margin-bottom: 30px; 
+                    white-space: pre; 
+                }
                 .header { 
                     font-weight: bold; 
                     margin-top: 20px;
                     border-bottom: 1px solid #000;
+                    padding-bottom: 5px;
                 }
                 .content {
                     padding-left: 20px;
                     white-space: pre;
+                    font-family: 'Courier New', Courier, monospace;
+                }
+                .diff-container {
+                    margin-left: 20px;
+                    font-family: 'Courier New', Courier, monospace;
+                }
+                .diff-table {
+                    border-spacing: 0;
+                    border-collapse: collapse;
+                    width: 100%;
+                }
+                .diff-table td, .diff-table th {
+                    padding: 0;
+                    white-space: pre;
+                    text-align: left;
+                }
+                .diff-table td.number, .diff-table th.number {
+                    text-align: right;
+                }
+                .diff-header {
+                    margin-bottom: 5px;
+                    border-spacing: 0;
+                    width: 100%;
+                }
+                .diff-header th {
+                    font-weight: bold;
+                    text-align: left;
+                    white-space: pre;
+                    padding: 0;
                 }
             </style>
         </head>
@@ -99,13 +138,32 @@ Total Number of differences: {{ total_differences if total_differences is define
 {% if statistics is defined and statistics != none %}{% for col, stats in statistics.items() %}
 Variable: {{ col }}    Type: {{ structure.variable_types.get(col, 'Unknown') }}
     Number of differences: {{ stats.get('n_differences', 0) }}
-    {% if stats.max_diff is defined and stats.max_diff != none %}Maximum Absolute Difference: {{ "%.6f"|format(stats.max_diff) }}
-    {% endif %}{% if stats.mean_diff is defined and stats.mean_diff != none %}Mean Difference: {{ "%.6f"|format(stats.mean_diff) }}{% endif %}
+    {% if stats.max_diff is defined and stats.max_diff != none %}Maximum Absolute Difference: {{ "%.4f"|format(stats.max_diff) }}
+    {% endif %}{% if stats.mean_diff is defined and stats.mean_diff != none %}Mean Difference: {{ "%.4f"|format(stats.mean_diff) }}{% endif %}
 
     First 20 Difference(s) (see CSV export for complete list):
-       Obs#        Base Value        Compare Value        difference       % Difference
-    {% for diff in stats.get('first_n_differences', []) %}    {{ "%6d"|format(diff.get('obs', 0)) }}        {{ "%-16s"|format('NULL' if diff.base is not defined or diff.base == none else diff.base) }}    {{ "%-16s"|format('NULL' if diff.compare is not defined or diff.compare == none else diff.compare) }}    {% if diff.abs_diff is defined and diff.abs_diff != none %}{{ "%12.6f"|format(diff.abs_diff) }}    {% if diff.pct_diff is defined and diff.pct_diff != none %}{{ "%12.2f"|format(diff.pct_diff) }}%{% else %}            -{% endif %}{% else %}            -            -{% endif %}
-    {% endfor %}
+    <div class="diff-container">
+        <table class="diff-header">
+            <tr>
+                <th class="number" style="width: 80px">Obs#</th>
+                <th style="width: 160px">Base Value</th>
+                <th style="width: 160px">Compare Value</th>
+                <th class="number" style="width: 120px">Difference</th>
+                <th class="number" style="width: 120px">% Difference</th>
+            </tr>
+        </table>
+        <table class="diff-table">
+        {% for diff in stats.get('first_n_differences', []) %}
+        <tr>
+            <td class="number" style="width: 80px">{{ "%6d"|format(diff.get('obs', 0)) }}</td>
+            <td style="width: 160px">{% if diff.base is not defined or diff.base == none %}NULL{% else %}{{ "%.4f"|format(diff.base|float) }}{% endif %}</td>
+            <td style="width: 160px">{% if diff.compare is not defined or diff.compare == none %}NULL{% else %}{{ "%.4f"|format(diff.compare|float) }}{% endif %}</td>
+            <td class="number" style="width: 120px">{% if diff.abs_diff is defined and diff.abs_diff != none %}{{ "%12.4f"|format(diff.abs_diff|float) }}{% else %}            -{% endif %}</td>
+            <td class="number" style="width: 120px">{% if diff.pct_diff is defined and diff.pct_diff != none %}{{ "%12.2f"|format(diff.pct_diff|float) }}%{% else %}            -{% endif %}</td>
+        </tr>
+        {% endfor %}
+        </table>
+    </div>
 {% endfor %}{% endif %}
                 </div>
             </div>
@@ -133,10 +191,10 @@ Variable: {{ col }}    Type: {{ structure.variable_types.get(col, 'Unknown') }}
                 row_data = {
                     "Variable": str(col),
                     "Observation": str(diff.get("obs", "")),
-                    "Base_Value": str(diff.get("base", "")),
-                    "Compare_Value": str(diff.get("compare", "")),
-                    "Difference": str(diff.get("abs_diff", "")) if diff.get("abs_diff") is not None else "",
-                    "Pct_Difference": str(diff.get("pct_diff", "")) if diff.get("pct_diff") is not None else ""
+                    "Base_Value": f"{float(diff.get('base')):.4f}" if diff.get("base") is not None else "NULL",
+                    "Compare_Value": f"{float(diff.get('compare')):.4f}" if diff.get("compare") is not None else "NULL",
+                    "Difference": f"{float(diff.get('abs_diff')):.4f}" if diff.get("abs_diff") is not None else "",
+                    "Pct_Difference": f"{float(diff.get('pct_diff')):.2f}" if diff.get("pct_diff") is not None else ""
                 }
                 rows.append(row_data)
 
