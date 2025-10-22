@@ -126,17 +126,28 @@ Variable: {{ col }}    Type: {{ structure.variable_types.get(col, 'Unknown') }}
         rows = []
         for col, stats in self.statistics.items():
             for diff in stats.get("first_n_differences", []):
+                # Convert all values to strings to ensure consistent types
                 row_data = {
-                    "Variable": col,
-                    "Observation": diff.get("obs"),
-                    "Base_Value": diff.get("base"),
-                    "Compare_Value": diff.get("compare"),
-                    "Difference": diff.get("abs_diff"),
-                    "Pct_Difference": diff.get("pct_diff")
+                    "Variable": str(col),
+                    "Observation": str(diff.get("obs", "")),
+                    "Base_Value": str(diff.get("base", "")),
+                    "Compare_Value": str(diff.get("compare", "")),
+                    "Difference": str(diff.get("abs_diff", "")) if diff.get("abs_diff") is not None else "",
+                    "Pct_Difference": str(diff.get("pct_diff", "")) if diff.get("pct_diff") is not None else ""
                 }
                 rows.append(row_data)
 
-        # Convert to Polars DataFrame and write to CSV
+        # Convert to Polars DataFrame with explicit schema
         if rows:
-            df = pl.DataFrame(rows)
+            df = pl.DataFrame(
+                rows,
+                schema=[
+                    ("Variable", pl.Utf8),
+                    ("Observation", pl.Utf8),
+                    ("Base_Value", pl.Utf8),
+                    ("Compare_Value", pl.Utf8),
+                    ("Difference", pl.Utf8),
+                    ("Pct_Difference", pl.Utf8)
+                ]
+            )
             df.write_csv(output_path)
