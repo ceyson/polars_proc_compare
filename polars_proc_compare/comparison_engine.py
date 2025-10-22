@@ -186,20 +186,9 @@ class DataCompare:
                 if comp_col in merged.columns:
                     # Get column type and determine comparison logic
                     dtype = merged.schema[base_col]
-                    if dtype.is_float():
+                    # Different comparison logic based on data type
+                    if str(dtype) in ['Float32', 'Float64']:
                         # For floating point types, use NaN-aware comparison
-                        diff_expr = (
-                            # Both are NaN - consider equal
-                            (pl.col(base_col).is_nan() & pl.col(comp_col).is_nan()).not_()
-                            # One is NaN, other isn't - consider different
-                            & ((pl.col(base_col).is_nan() & pl.col(comp_col).is_not_nan()) |
-                               (pl.col(base_col).is_not_nan() & pl.col(comp_col).is_nan()) |
-                               # Neither is NaN - compare values
-                               (pl.col(base_col).is_not_nan() & pl.col(comp_col).is_not_nan() &
-                                (pl.col(base_col) != pl.col(comp_col))))
-                        )
-                    elif dtype == pl.Utf8:
-                        # For string types, handle nulls explicitly
                         diff_expr = (
                             # Both null - consider equal
                             (pl.col(base_col).is_null() & pl.col(comp_col).is_null()).not_()
@@ -211,8 +200,17 @@ class DataCompare:
                                 (pl.col(base_col) != pl.col(comp_col))))
                         )
                     else:
-                        # For non-float types (including strings), use simple comparison
-                        diff_expr = (pl.col(base_col) != pl.col(comp_col))
+                        # For all other types (including strings), use null-aware comparison
+                        diff_expr = (
+                            # Both null - consider equal
+                            (pl.col(base_col).is_null() & pl.col(comp_col).is_null()).not_()
+                            # One is null, other isn't - consider different
+                            & ((pl.col(base_col).is_null() & pl.col(comp_col).is_not_null()) |
+                               (pl.col(base_col).is_not_null() & pl.col(comp_col).is_null()) |
+                               # Neither is null - compare values
+                               (pl.col(base_col).is_not_null() & pl.col(comp_col).is_not_null() &
+                                (pl.col(base_col) != pl.col(comp_col))))
+                        )
 
                     diff_rows = merged.filter(diff_expr)
 
