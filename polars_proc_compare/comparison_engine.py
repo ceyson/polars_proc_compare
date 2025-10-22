@@ -106,19 +106,14 @@ class DataCompare:
                 ])
             )
 
-            # Create observation numbers and include key columns if present
-            obs_nums = list(range(1, len(diffs) + 1))
+            # Include row numbers
             select_cols = [
-                pl.Series("obs", obs_nums),
+                pl.col("__row_id").alias("obs"),  # Use actual row number
                 pl.col(base_col).alias("base"),
                 pl.col(comp_col).alias("compare"),
                 pl.col("abs_diff"),
                 pl.col("pct_diff")
             ]
-            # Add key columns if present
-            if self.key_columns:
-                for key_col in self.key_columns:
-                    select_cols.append(pl.col(key_col).alias(f"key_{key_col}"))
             col_stats["first_n_differences"] = diffs.select(select_cols).rows(named=True)
 
             # Calculate overall statistics for non-null values only
@@ -138,17 +133,12 @@ class DataCompare:
                     "mean_diff": None
                 })
         else:
-            # Non-numeric comparisons
-            obs_nums = list(range(1, len(sample_diff) + 1))
+            # Non-numeric comparisons with actual row numbers
             select_cols = [
-                pl.Series("obs", obs_nums),
+                pl.col("__row_id").alias("obs"),  # Use actual row number
                 pl.col(base_col).alias("base"),
                 pl.col(comp_col).alias("compare")
             ]
-            # Add key columns if present
-            if self.key_columns:
-                for key_col in self.key_columns:
-                    select_cols.append(pl.col(key_col).alias(f"key_{key_col}"))
             col_stats["first_n_differences"] = sample_diff.select(select_cols).rows(named=True)
 
         return col_stats
@@ -178,18 +168,21 @@ class DataCompare:
             for col in compare_data.columns
         })
 
+        # Always add row index and use it in merged results
+        base_df = base_df.with_row_count("__row_id")
+        compare_df = compare_df.with_row_count("__row_id")
+
         # Join on key columns if provided, otherwise use row index
         if self.key_columns:
+            # For key-based comparison, keep row numbers from base
             merged = base_df.join(
-                compare_df,
+                compare_df.drop("__row_id"),  # Drop compare's row id to avoid conflict
                 on=self.key_columns,
                 how="outer",
                 suffix="_compare"
             )
         else:
-            # Add row index for comparison
-            base_df = base_df.with_row_count("__row_id")
-            compare_df = compare_df.with_row_count("__row_id")
+            # For position-based comparison, use row index
             merged = base_df.join(
                 compare_df,
                 on="__row_id",

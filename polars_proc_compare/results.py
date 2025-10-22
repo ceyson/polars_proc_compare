@@ -129,44 +129,28 @@ Variable: {{ col }}    Type: {{ structure.variable_types.get(col, 'Unknown') }}
         rows = []
         for col, stats in self.statistics.items():
             for diff in stats.get("first_n_differences", []):
-                # Start with key columns if available
-                row_data = {}
-                
-                # Add key columns and their values if present
-                if hasattr(diff, 'keys') and self.key_columns:
-                    for key_col in self.key_columns:
-                        key_name = f"Key_{key_col}"
-                        key_value = diff.get(f"key_{key_col}", "")
-                        row_data[key_name] = str(key_value) if key_value is not None else ""
-                
-                # Add standard difference information
-                row_data.update({
+                # Create row data with standard fields
+                row_data = {
                     "Variable": str(col),
                     "Observation": str(diff.get("obs", "")),
                     "Base_Value": str(diff.get("base", "")),
                     "Compare_Value": str(diff.get("compare", "")),
                     "Difference": str(diff.get("abs_diff", "")) if diff.get("abs_diff") is not None else "",
                     "Pct_Difference": str(diff.get("pct_diff", "")) if diff.get("pct_diff") is not None else ""
-                })
+                }
                 rows.append(row_data)
 
         # Convert to Polars DataFrame with explicit schema
         if rows:
-            # Build schema with key columns first
-            schema = []
-            if self.key_columns:
-                for key_col in self.key_columns:
-                    schema.append((f"Key_{key_col}", pl.Utf8))
-            
-            # Add standard columns
-            schema.extend([
+            # Define schema
+            schema = [
                 ("Variable", pl.Utf8),
                 ("Observation", pl.Utf8),
                 ("Base_Value", pl.Utf8),
                 ("Compare_Value", pl.Utf8),
                 ("Difference", pl.Utf8),
                 ("Pct_Difference", pl.Utf8)
-            ])
+            ]
             
             df = pl.DataFrame(rows, schema=schema)
             df.write_csv(output_path)
