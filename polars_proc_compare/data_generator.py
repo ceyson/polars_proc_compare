@@ -62,25 +62,35 @@ def create_delta_dataset(
         # Apply modifications based on data type
         if col_dtype in [pl.Int64, pl.Float64, pl.Int32, pl.Float32]:
             # Convert to numpy array while preserving nulls
-            values = series.to_numpy()
+            values = series.to_numpy().copy()  # Create a writable copy
             mask = ~np.isnan(values)  # Track non-null values
             if col_dtype in [pl.Int64, pl.Int32]:
                 # Only modify non-null values
                 valid_indices = [idx for idx in row_indices if mask[idx]]
                 if valid_indices:
-                    values[valid_indices] += np.random.randint(-10, 11, size=len(valid_indices))
+                    # Create modified values array
+                    mod_values = values.copy()
+                    mod_values[valid_indices] += np.random.randint(-10, 11, size=len(valid_indices))
+                    values = mod_values
             else:
                 valid_indices = [idx for idx in row_indices if mask[idx]]
                 if valid_indices:
+                    # Create modified values array
+                    mod_values = values.copy()
                     current_vals = values[valid_indices]
                     deltas = np.random.uniform(-1, 1, size=len(valid_indices))
-                    values[valid_indices] += deltas * np.where(current_vals != 0, np.abs(current_vals), 1)
+                    mod_values[valid_indices] += deltas * np.where(current_vals != 0, np.abs(current_vals), 1)
+                    values = mod_values
         elif col_dtype == pl.Boolean:
-            values[row_indices] = ~values[row_indices]
+            # Create a copy for boolean values
+            mod_values = values.copy()
+            mod_values[row_indices] = ~mod_values[row_indices]
+            values = mod_values
         else:
             # Handle string modifications while preserving type
-            modified_values = np.array([f"{v}_modified" for v in values[row_indices]], dtype=str)
-            values[row_indices] = modified_values
+            mod_values = values.copy()
+            mod_values[row_indices] = np.array([f"{v}_modified" for v in values[row_indices]], dtype=str)
+            values = mod_values
 
         # Create new series
         modified_series[col_name] = pl.Series(name=col_name, values=values)
