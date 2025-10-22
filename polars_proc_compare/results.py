@@ -102,7 +102,7 @@ Variable: {{ col }}    Type: {{ structure.variable_types.get(col, 'Unknown') }}
     {% if stats.max_diff is defined and stats.max_diff != none %}Maximum Absolute Difference: {{ "%.6f"|format(stats.max_diff) }}
     {% endif %}{% if stats.mean_diff is defined and stats.mean_diff != none %}Mean Difference: {{ "%.6f"|format(stats.mean_diff) }}{% endif %}
 
-    First {{ stats.get('first_n_differences', [])|length }} Difference(s):
+    First 20 Difference(s) (see CSV export for complete list):
        Obs#        Base Value        Compare Value        difference       % Difference
     {% for diff in stats.get('first_n_differences', []) %}    {{ "%6d"|format(diff.get('obs', 0)) }}        {{ "%-16s"|format('NULL' if diff.base is not defined or diff.base == none else diff.base) }}    {{ "%-16s"|format('NULL' if diff.compare is not defined or diff.compare == none else diff.compare) }}    {% if diff.abs_diff is defined and diff.abs_diff != none %}{{ "%12.6f"|format(diff.abs_diff) }}    {% if diff.pct_diff is defined and diff.pct_diff != none %}{{ "%12.2f"|format(diff.pct_diff) }}%{% else %}            -{% endif %}{% else %}            -            -{% endif %}
     {% endfor %}
@@ -128,7 +128,7 @@ Variable: {{ col }}    Type: {{ structure.variable_types.get(col, 'Unknown') }}
         # Create a list to store all differences
         rows = []
         for col, stats in self.statistics.items():
-            for diff in stats.get("first_n_differences", []):
+            for diff in stats.get("first_n_differences", []):  # Note: Now contains all differences
                 # Create row data with standard fields
                 row_data = {
                     "Variable": str(col),

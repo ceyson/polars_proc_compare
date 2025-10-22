@@ -89,8 +89,8 @@ class DataCompare:
             "first_n_differences": []
         }
 
-        # Get first 20 differences with normalized values using lazy evaluation
-        sample_diff = diff_lazy.limit(20).collect()
+        # Get all differences
+        sample_diff = diff_lazy.collect()
 
         if diff_rows[base_col].dtype.is_numeric():
             # Numeric comparisons using normalized types

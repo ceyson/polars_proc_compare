@@ -12,8 +12,8 @@ A high-performance Python implementation of SAS PROC COMPARE functionality using
   - String comparisons
 - **Flexible Key Matching**: Compare datasets using key columns or position-based matching
 - **Comprehensive Reporting**:
-  - HTML reports in SAS PROC COMPARE style
-  - CSV exports of differences with row-level details
+  - HTML reports in SAS PROC COMPARE style (shows first 20 differences per column)
+  - CSV exports with complete difference details (all rows)
 
 ### Performance Features
 - Chunked processing for large datasets
