@@ -26,7 +26,6 @@ def create_delta_dataset(
     """
     if df is None:
         raise ValueError("Input DataFrame cannot be None")
-    
     if exclude_columns is None:
         exclude_columns = []
     if seed is not None:
@@ -56,18 +55,26 @@ def create_delta_dataset(
         modifications["modified_columns"][col_name] = mods_per_column
         modifications["modified_cells"] += mods_per_column
 
-        # Get original values as numpy array
-        values = df[col_name].to_numpy().copy()
+        # Get original values and handle nulls
+        series = df[col_name]
         col_dtype = df.schema[col_name]
 
         # Apply modifications based on data type
         if col_dtype in [pl.Int64, pl.Float64, pl.Int32, pl.Float32]:
+            # Convert to numpy array while preserving nulls
+            values = series.to_numpy()
+            mask = ~np.isnan(values)  # Track non-null values
             if col_dtype in [pl.Int64, pl.Int32]:
-                values[row_indices] += np.random.randint(-10, 11, size=mods_per_column)
+                # Only modify non-null values
+                valid_indices = [idx for idx in row_indices if mask[idx]]
+                if valid_indices:
+                    values[valid_indices] += np.random.randint(-10, 11, size=len(valid_indices))
             else:
-                current_vals = values[row_indices]
-                deltas = np.random.uniform(-1, 1, size=mods_per_column)
-                values[row_indices] += deltas * np.where(current_vals != 0, np.abs(current_vals), 1)
+                valid_indices = [idx for idx in row_indices if mask[idx]]
+                if valid_indices:
+                    current_vals = values[valid_indices]
+                    deltas = np.random.uniform(-1, 1, size=len(valid_indices))
+                    values[valid_indices] += deltas * np.where(current_vals != 0, np.abs(current_vals), 1)
         elif col_dtype == pl.Boolean:
             values[row_indices] = ~values[row_indices]
         else:

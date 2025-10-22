@@ -198,16 +198,16 @@ class DataCompare:
                     dtype = merged.schema[base_col]
                     # Different comparison logic based on data type
                     if str(dtype) in ['Float32', 'Float64']:
-                        # For floating point types, use NaN-aware comparison
+                        # For floating point types, treat NULL and NaN as equivalent
                         diff_expr = (
-                            # Both null - consider equal
-                            (pl.col(base_col).is_null() & pl.col(comp_col).is_null()).not_()
-                            # One is null, other isn't - consider different
-                            & ((pl.col(base_col).is_null() & pl.col(comp_col).is_not_null()) |
-                               (pl.col(base_col).is_not_null() & pl.col(comp_col).is_null()) |
-                               # Neither is null - compare values
-                               (pl.col(base_col).is_not_null() & pl.col(comp_col).is_not_null() &
-                                (pl.col(base_col) != pl.col(comp_col))))
+                            # Both are missing (NULL or NaN) - consider equal
+                            (pl.col(base_col).is_null() | pl.col(base_col).is_nan())
+                            .eq(pl.col(comp_col).is_null() | pl.col(comp_col).is_nan())
+                            .not_()
+                            # Neither is missing - compare values
+                            | ((~pl.col(base_col).is_null() & ~pl.col(base_col).is_nan())
+                               & (~pl.col(comp_col).is_null() & ~pl.col(comp_col).is_nan())
+                               & (pl.col(base_col) != pl.col(comp_col)))
                         )
                     else:
                         # For all other types (including strings), use null-aware comparison
