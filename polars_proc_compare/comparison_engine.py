@@ -1,7 +1,10 @@
 """Comparison engine for Polars DataFrames."""
 
 import polars as pl
-from typing import Optional, Dict, List, Tuple
+from typing import Optional, Dict, List, Tuple, Union
+from pathlib import Path
+from .memory_optimizer import MemoryOptimizedSchema
+from .disk_compare import DiskDataCompare
 import multiprocessing as mp
 from concurrent.futures import ThreadPoolExecutor
 from .results import ComparisonResults
@@ -10,40 +13,64 @@ from .results import ComparisonResults
 class DataCompare:
     def __init__(
         self,
-        base_df: pl.DataFrame,
-        compare_df: pl.DataFrame,
+        base_df: Union[pl.DataFrame, str, Path],
+        compare_df: Union[pl.DataFrame, str, Path],
         key_columns: Optional[List[str]] = None,
         chunk_size: Optional[int] = None,
         n_workers: Optional[int] = None,
         cache_size: int = 1024,
         use_streaming: bool = True,
-        memory_limit: Optional[int] = None  # in MB
+        memory_limit: Optional[int] = None,  # in MB
+        disk_mode: bool = False,
+        temp_dir: Optional[str] = None,
+        optimize_dtypes: bool = True,
+        schema_optimizer: Optional[MemoryOptimizedSchema] = None,
+        max_memory_usage: Optional[int] = None  # in MB, for disk mode
     ):
         """Initialize the comparison engine."""
-        self.base_df = base_df
-        self.compare_df = compare_df
+        self.disk_mode = disk_mode
+        
+        if disk_mode:
+            self.disk_compare = DiskDataCompare(
+                base_df=base_df,
+                compare_df=compare_df,
+                key_columns=key_columns,
+                chunk_size=chunk_size,
+                n_workers=n_workers,
+                max_memory_usage=max_memory_usage or memory_limit,
+                temp_dir=temp_dir,
+                optimize_dtypes=optimize_dtypes,
+                schema_optimizer=schema_optimizer
+            )
+            self.results = self.disk_compare.results
+            return  # Skip the rest of initialization for disk mode
+            
+        # In-memory mode initialization
+        self.base_df = pl.read_parquet(base_df) if isinstance(base_df, (str, Path)) else base_df
+        self.compare_df = pl.read_parquet(compare_df) if isinstance(compare_df, (str, Path)) else compare_df
         self.key_columns = key_columns
-        self.n_workers = n_workers or min(32, mp.cpu_count() * 2)  # More aggressive parallelization
+        self.n_workers = n_workers or min(32, mp.cpu_count() * 2)
         self.cache_size = cache_size
         self.use_streaming = use_streaming
         self.memory_limit = memory_limit
         self.results = ComparisonResults()
 
-        # Calculate optimal chunk size
-        total_rows = max(len(base_df), len(compare_df))
-        if chunk_size is None:
-            # Dynamic chunk sizing based on dataset size and available CPUs
-            if total_rows < 100_000:
-                self.chunk_size = 10_000
-            elif total_rows < 1_000_000:
-                self.chunk_size = 50_000
-            else:
-                self.chunk_size = 100_000
+        # Calculate optimal chunk size for in-memory mode only
+        if not self.disk_mode:
+            total_rows = max(len(self.base_df), len(self.compare_df))
+            if chunk_size is None:
+                # Dynamic chunk sizing based on dataset size and available CPUs
+                if total_rows < 100_000:
+                    self.chunk_size = 10_000
+                elif total_rows < 1_000_000:
+                    self.chunk_size = 50_000
+                else:
+                    self.chunk_size = 100_000
 
-            # Adjust for number of workers
-            self.chunk_size = max(self.chunk_size, total_rows // (self.n_workers * 4))
-        else:
-            self.chunk_size = chunk_size
+                # Adjust for number of workers
+                self.chunk_size = max(self.chunk_size, total_rows // (self.n_workers * 4))
+            else:
+                self.chunk_size = chunk_size
 
         # Adjust chunk size based on memory limit if specified
         if memory_limit:
@@ -94,18 +121,31 @@ class DataCompare:
 
         if diff_rows[base_col].dtype.is_numeric():
             # Numeric comparisons using normalized types
-            diffs = (
-                sample_diff
-                .with_columns([
-                    ((pl.col(comp_col) - pl.col(base_col))
-                     .round(4)
-                     .alias("abs_diff")),
-                    (pl.when(pl.col(base_col) != 0)
-                     .then(((pl.col(comp_col) - pl.col(base_col)) / pl.col(base_col) * 100).round(2))
-                     .otherwise(None)
-                     .alias("pct_diff"))
-                ])
-            )
+            # Handle numeric comparisons based on type
+            if str(diff_rows[base_col].dtype).startswith('Int'):
+                diffs = (
+                    sample_diff
+                    .with_columns([
+                        (pl.col(comp_col) - pl.col(base_col)).alias("abs_diff"),
+                        (pl.when(pl.col(base_col) != 0)
+                         .then(((pl.col(comp_col) - pl.col(base_col)) / pl.col(base_col) * 100).cast(pl.Float64))
+                         .otherwise(None)
+                         .alias("pct_diff"))
+                    ])
+                )
+            else:
+                diffs = (
+                    sample_diff
+                    .with_columns([
+                        ((pl.col(comp_col) - pl.col(base_col))
+                         .round(4)
+                         .alias("abs_diff")),
+                        (pl.when(pl.col(base_col) != 0)
+                         .then(((pl.col(comp_col) - pl.col(base_col)) / pl.col(base_col) * 100).round(2))
+                         .otherwise(None)
+                         .alias("pct_diff"))
+                    ])
+                )
 
             # Include row numbers
             select_cols = [
@@ -201,7 +241,14 @@ class DataCompare:
                     # Get column type and determine comparison logic
                     dtype = merged.schema[base_col]
                     # Different comparison logic based on data type
-                    if str(dtype) in ['Float32', 'Float64']:
+                    if dtype == pl.Categorical:
+                        # Convert categoricals to strings for comparison
+                        diff_expr = (
+                            (pl.col(base_col).cast(pl.Utf8) != pl.col(comp_col).cast(pl.Utf8))
+                            | (pl.col(base_col).is_null() & pl.col(comp_col).is_not_null())
+                            | (pl.col(base_col).is_not_null() & pl.col(comp_col).is_null())
+                        )
+                    elif str(dtype) in ['Float32', 'Float64']:
                         # For floating point types, treat NULL and NaN as equivalent
                         diff_expr = (
                             # Both are missing (NULL or NaN) - consider equal
@@ -338,6 +385,9 @@ class DataCompare:
 
     def compare(self) -> ComparisonResults:
         """Perform the comparison and return results."""
+        if self.disk_mode:
+            return self.disk_compare.compare()
+            
         # Compare structure
         structure_results = self._compare_structure()
         self.results.set_structure_results(structure_results)

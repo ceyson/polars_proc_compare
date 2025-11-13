@@ -31,8 +31,11 @@ def create_delta_dataset(
     if seed is not None:
         np.random.seed(seed)
 
+    # Always exclude timestamp columns from modification
     exclude_columns = exclude_columns or []
-    modifiable_columns = [col for col in df.columns if col not in exclude_columns]
+    modifiable_columns = [col for col in df.columns 
+                         if col not in exclude_columns 
+                         and not str(df.schema[col]).startswith('Datetime')]
 
     # Initialize tracking
     modifications = {
@@ -85,8 +88,23 @@ def create_delta_dataset(
             mod_values = values.copy()
             mod_values[row_indices] = ~mod_values[row_indices]
             values = mod_values
+        elif col_dtype == pl.Categorical or str(col_dtype).startswith('Utf8'):
+            # Handle both Categorical and Utf8 strings
+            if col_dtype == pl.Categorical:
+                str_series = series.cast(pl.Utf8)
+            else:
+                str_series = series
+            # Modify the strings using Polars operations
+            modified = str_series.to_frame().with_row_count('idx').with_columns([
+                pl.when(pl.col('idx').is_in(row_indices))
+                .then(pl.col(str_series.name) + '_modified')
+                .otherwise(pl.col(str_series.name))
+                .alias('modified')
+            ])['modified']
+            # Convert back to original type
+            values = modified.cast(col_dtype)
         else:
-            # Handle string modifications while preserving type
+            # Handle string modifications
             mod_values = values.copy()
             mod_values[row_indices] = np.array([f"{v}_modified" for v in values[row_indices]], dtype=str)
             values = mod_values
