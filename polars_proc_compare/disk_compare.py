@@ -1,10 +1,65 @@
 """Disk-based comparison engine for Polars DataFrames."""
 
 import polars as pl
-from typing import Optional, Dict, List, Tuple, Union
+from typing import Optional, Dict, List, Tuple, Union, Set
 import multiprocessing as mp
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from warnings import warn
+
+class TypeSupport:
+    """Manages supported data types and validation."""
+    
+    SUPPORTED_TYPES: Set[pl.DataType] = {
+        pl.Int64, pl.Int32, pl.Float64, pl.Float32,
+        pl.Utf8, pl.Categorical, pl.Boolean, pl.Datetime
+    }
+    
+    PLANNED_TYPES: Dict[pl.DataType, str] = {
+        pl.Date: "v1.1",
+        pl.Time: "v1.1",
+        pl.Duration: "v1.1",
+        pl.Decimal: "v1.2",
+        pl.UInt64: "v1.1",
+        pl.UInt32: "v1.1",
+        pl.UInt16: "v1.1",
+        pl.UInt8: "v1.1",
+        pl.Int16: "v1.1",
+        pl.Int8: "v1.1"
+    }
+    
+    @classmethod
+    def validate_schema(cls, df: pl.DataFrame) -> List[Tuple[str, pl.DataType]]:
+        """Validate DataFrame schema against supported types.
+        
+        Args:
+            df: DataFrame to validate
+            
+        Returns:
+            List of (column_name, dtype) tuples for unsupported columns
+        """
+        unsupported = []
+        for col, dtype in df.schema.items():
+            if dtype not in cls.SUPPORTED_TYPES:
+                unsupported.append((col, dtype))
+        return unsupported
+    
+    @classmethod
+    def warn_unsupported(cls, unsupported: List[Tuple[str, pl.DataType]]):
+        """Generate appropriate warnings for unsupported types."""
+        for col, dtype in unsupported:
+            if dtype in cls.PLANNED_TYPES:
+                warn(
+                    f"Column '{col}' has type {dtype} which is not yet supported. "
+                    f"Support planned for version {cls.PLANNED_TYPES[dtype]}.",
+                    FutureWarning
+                )
+            else:
+                warn(
+                    f"Column '{col}' has unsupported type {dtype}. "
+                    "Comparison results may be unreliable.",
+                    UserWarning
+                )
 
 from .memory_optimizer import MemoryOptimizedSchema, MemoryMonitor
 from .parquet_manager import ParquetManager
@@ -23,9 +78,23 @@ class DiskDataCompare:
         max_memory_usage: Optional[int] = None,
         temp_dir: Optional[str] = None,
         optimize_dtypes: bool = True,
-        schema_optimizer: Optional[MemoryOptimizedSchema] = None
+        schema_optimizer: Optional[MemoryOptimizedSchema] = None,
+        ignore_type_warnings: bool = False
     ):
-        """Initialize disk-based comparison engine."""
+        """Initialize disk-based comparison engine.
+        
+        Args:
+            base_df: Base DataFrame or path to parquet file
+            compare_df: Comparison DataFrame or path to parquet file
+            key_columns: Columns to use as keys for matching rows
+            chunk_size: Number of rows per chunk
+            n_workers: Number of worker threads
+            max_memory_usage: Maximum memory usage in MB
+            temp_dir: Directory for temporary files
+            optimize_dtypes: Whether to optimize data types
+            schema_optimizer: Custom schema optimizer
+            ignore_type_warnings: Whether to suppress warnings about unsupported types
+        """
         self.key_columns = key_columns
         self.n_workers = n_workers or min(32, mp.cpu_count() * 2)
         self.optimize_dtypes = optimize_dtypes
@@ -33,6 +102,18 @@ class DiskDataCompare:
         self.memory_monitor = MemoryMonitor(max_memory_usage)
         self.parquet_manager = ParquetManager(temp_dir)
         self.results = ComparisonResults()
+        
+        # Validate types if input is DataFrame
+        if not ignore_type_warnings:
+            if isinstance(base_df, pl.DataFrame):
+                unsupported = TypeSupport.validate_schema(base_df)
+                if unsupported:
+                    TypeSupport.warn_unsupported(unsupported)
+            
+            if isinstance(compare_df, pl.DataFrame):
+                unsupported = TypeSupport.validate_schema(compare_df)
+                if unsupported:
+                    TypeSupport.warn_unsupported(unsupported)
         
         # Convert inputs to parquet if needed
         self.base_path = (base_df if isinstance(base_df, (str, Path))
