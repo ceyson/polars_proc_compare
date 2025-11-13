@@ -193,7 +193,6 @@ class TypeSupport:
     
     # Configuration for type-specific comparisons
     NUMERIC_TOLERANCE = 1e-10  # Default tolerance for floating-point comparisons
-    DATETIME_TOLERANCE = pd.Timedelta(microseconds=1)  # Default tolerance for datetime comparisons
     
     # Type categories for specialized comparison logic
     NUMERIC_TYPES = {
@@ -212,6 +211,19 @@ class TypeSupport:
     
     COMPLEX_TYPES = {
         pl.List, pl.Struct
+    }
+    
+    PLANNED_TYPES = {
+        pl.Date: "v1.1",
+        pl.Time: "v1.1",
+        pl.Duration: "v1.1",
+        pl.Decimal: "v1.2",
+        pl.UInt64: "v1.1",
+        pl.UInt32: "v1.1",
+        pl.UInt16: "v1.1",
+        pl.UInt8: "v1.1",
+        pl.Int16: "v1.1",
+        pl.Int8: "v1.1"
     }
     
     @classmethod
@@ -388,31 +400,40 @@ class DiskDataCompare:
     def _calculate_differences(self, merged: pl.DataFrame) -> Dict:
         """Calculate differences between merged chunks."""
         chunk_stats = {}
+        
         for col in self.results.structure_results["common_cols"]:
             if col not in (self.key_columns or []):
                 base_col = col
                 comp_col = f"{col}_compare"
                 
                 if comp_col in merged.columns:
-                    # Handle different data types appropriately
                     dtype = merged.schema[base_col]
-                    if dtype == pl.Categorical:
-                        # Convert categoricals to strings for comparison
+                    
+                    # Create comparison expression based on type
+                    if dtype in TypeSupport.NUMERIC_TYPES:
+                        diff_expr = (
+                            (pl.col(base_col).is_null() & pl.col(comp_col).is_null()).not_()
+                            & ((pl.col(base_col).is_null() & pl.col(comp_col).is_not_null())
+                               | (pl.col(base_col).is_not_null() & pl.col(comp_col).is_null())
+                               | (pl.col(base_col).is_not_null() & pl.col(comp_col).is_not_null()
+                                  & (pl.col(base_col) != pl.col(comp_col))))
+                        )
+                    elif dtype == pl.Boolean:
+                        diff_expr = (
+                            (pl.col(base_col).is_null() & pl.col(comp_col).is_null()).not_()
+                            & ((pl.col(base_col).is_null() & pl.col(comp_col).is_not_null())
+                               | (pl.col(base_col).is_not_null() & pl.col(comp_col).is_null())
+                               | (pl.col(base_col).is_not_null() & pl.col(comp_col).is_not_null()
+                                  & (pl.col(base_col) != pl.col(comp_col))))
+                        )
+                    elif dtype == pl.Categorical:
                         diff_expr = (
                             (pl.col(base_col).cast(pl.Utf8) != pl.col(comp_col).cast(pl.Utf8))
                             | (pl.col(base_col).is_null() & pl.col(comp_col).is_not_null())
                             | (pl.col(base_col).is_not_null() & pl.col(comp_col).is_null())
                         )
-                    elif str(dtype) in ['Float32', 'Float64']:
-                        diff_expr = (
-                            (pl.col(base_col).is_null() | pl.col(base_col).is_nan())
-                            .eq(pl.col(comp_col).is_null() | pl.col(comp_col).is_nan())
-                            .not_()
-                            | ((~pl.col(base_col).is_null() & ~pl.col(base_col).is_nan())
-                               & (~pl.col(comp_col).is_null() & ~pl.col(comp_col).is_nan())
-                               & (pl.col(base_col) != pl.col(comp_col)))
-                        )
                     else:
+                        # Default comparison for other types
                         diff_expr = (
                             (pl.col(base_col).is_null() & pl.col(comp_col).is_null()).not_()
                             & ((pl.col(base_col).is_null() & pl.col(comp_col).is_not_null())
@@ -421,79 +442,49 @@ class DiskDataCompare:
                                   & (pl.col(base_col) != pl.col(comp_col))))
                         )
                     
+                    # Find differences
                     diff_rows = merged.filter(diff_expr)
+                    
                     if len(diff_rows) > 0:
-                        chunk_stats[col] = self._calculate_column_stats(
-                            diff_rows, base_col, comp_col
-                        )
+                        chunk_stats[col] = {
+                            "n_differences": len(diff_rows),
+                            "first_n_differences": [
+                                {
+                                    "obs": row["__row_id"],
+                                    "base": row[base_col],
+                                    "compare": row[comp_col],
+                                    "abs_diff": None,
+                                    "pct_diff": None
+                                }
+                                for row in diff_rows.rows(named=True)[:20]
+                            ]
+                        }
+                        
+                        # Add numeric statistics
+                        if dtype in TypeSupport.NUMERIC_TYPES:
+                            valid_diffs = (
+                                diff_rows
+                                .filter(pl.col(base_col).is_not_null() & pl.col(comp_col).is_not_null())
+                                .select([(pl.col(comp_col) - pl.col(base_col)).abs().alias("diff")])
+                            )
+                            
+                            if len(valid_diffs) > 0:
+                                abs_diffs = valid_diffs["diff"]
+                                chunk_stats[col].update({
+                                    "max_diff": float(abs_diffs.max()),
+                                    "mean_diff": float(abs_diffs.mean())
+                                })
+                                
+                                # Update difference info
+                                for diff in chunk_stats[col]["first_n_differences"]:
+                                    if diff["base"] is not None and diff["compare"] is not None:
+                                        abs_diff = abs(float(diff["compare"]) - float(diff["base"]))
+                                        diff["abs_diff"] = abs_diff
+                                        if float(diff["base"]) != 0:
+                                            diff["pct_diff"] = (abs_diff / abs(float(diff["base"]))) * 100
         
         return chunk_stats
 
-    def _calculate_column_stats(self, diff_rows: pl.DataFrame, base_col: str, comp_col: str) -> Dict:
-        """Calculate statistics for a column with differences."""
-        col_stats = {
-            "n_differences": len(diff_rows),
-            "first_n_differences": []
-        }
-        
-        if diff_rows[base_col].dtype.is_numeric():
-            # Handle numeric comparisons based on type
-            if str(diff_rows[base_col].dtype).startswith('Int'):
-                diffs = diff_rows.with_columns([
-                    (pl.col(comp_col) - pl.col(base_col)).alias("abs_diff"),
-                    (pl.when(pl.col(base_col) != 0)
-                     .then(((pl.col(comp_col) - pl.col(base_col)) / pl.col(base_col) * 100).cast(pl.Float64))
-                     .otherwise(None)
-                     .alias("pct_diff"))
-                ])
-            else:
-                diffs = diff_rows.with_columns([
-                    ((pl.col(comp_col) - pl.col(base_col))
-                     .round(4)
-                     .alias("abs_diff")),
-                    (pl.when(pl.col(base_col) != 0)
-                     .then(((pl.col(comp_col) - pl.col(base_col)) / pl.col(base_col) * 100).round(2))
-                     .otherwise(None)
-                     .alias("pct_diff"))
-                ])
-
-            # Include row numbers and differences
-            select_cols = [
-                pl.col("__row_id").alias("obs"),
-                pl.col(base_col).alias("base"),
-                pl.col(comp_col).alias("compare"),
-                pl.col("abs_diff"),
-                pl.col("pct_diff")
-            ]
-            col_stats["first_n_differences"] = diffs.select(select_cols).rows(named=True)
-            
-            # Calculate overall statistics
-            valid_diffs = (
-                diff_rows
-                .filter(pl.col(base_col).is_not_null() & pl.col(comp_col).is_not_null())
-                .select([(pl.col(comp_col) - pl.col(base_col)).abs().alias("diff")])
-            )
-            
-            if len(valid_diffs) > 0:
-                col_stats.update({
-                    "max_diff": float(valid_diffs["diff"].max()),
-                    "mean_diff": float(valid_diffs["diff"].mean())
-                })
-            else:
-                col_stats.update({
-                    "max_diff": None,
-                    "mean_diff": None
-                })
-        else:
-            # Non-numeric comparisons
-            select_cols = [
-                pl.col("__row_id").alias("obs"),
-                pl.col(base_col).alias("base"),
-                pl.col(comp_col).alias("compare")
-            ]
-            col_stats["first_n_differences"] = diff_rows.select(select_cols).rows(named=True)
-        
-        return col_stats
 
     def compare(self) -> ComparisonResults:
         """Perform the comparison and return results."""
