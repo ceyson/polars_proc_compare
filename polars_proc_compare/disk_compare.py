@@ -1,31 +1,217 @@
 """Disk-based comparison engine for Polars DataFrames."""
 
 import polars as pl
-from typing import Optional, Dict, List, Tuple, Union, Set
+import pandas as pd
+import numpy as np
+from decimal import Decimal
+from typing import Optional, Dict, List, Tuple, Union, Set, Any
 import multiprocessing as mp
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from warnings import warn
 
+
+class TypeComparison:
+    """Handles type-specific comparison logic."""
+    
+    @staticmethod
+    def compare_numeric(base: Any, compare: Any, tolerance: float = 1e-10) -> Tuple[bool, Optional[float], Optional[float]]:
+        """Compare numeric values with tolerance.
+        
+        Args:
+            base: Base value
+            compare: Comparison value
+            tolerance: Tolerance for floating-point comparison
+            
+        Returns:
+            Tuple of (is_different, absolute_diff, percent_diff)
+        """
+        if base is None or compare is None:
+            return True, None, None
+            
+        try:
+            base_val = float(base)
+            comp_val = float(compare)
+            
+            # Handle special values
+            if np.isnan(base_val) and np.isnan(comp_val):
+                return False, None, None
+                
+            if np.isinf(base_val) or np.isinf(comp_val):
+                if np.isinf(base_val) and np.isinf(comp_val):
+                    if np.sign(base_val) == np.sign(comp_val):
+                        return False, None, None
+                return True, None, None
+                
+            abs_diff = abs(comp_val - base_val)
+            if abs_diff <= tolerance:
+                return False, None, None
+                
+            # Round differences to avoid floating point precision issues
+            abs_diff = round(abs_diff, 10)
+            pct_diff = round((abs_diff / abs(base_val) * 100), 10) if base_val != 0 else None
+            return True, abs_diff, pct_diff
+            
+        except (ValueError, TypeError):
+            return True, None, None
+    
+    @staticmethod
+    def compare_datetime(base: Any, compare: Any, tolerance: pd.Timedelta = pd.Timedelta(microseconds=1)) -> Tuple[bool, Optional[float], None]:
+        """Compare datetime values with tolerance.
+        
+        Args:
+            base: Base value
+            compare: Comparison value
+            tolerance: Tolerance for datetime comparison
+            
+        Returns:
+            Tuple of (is_different, absolute_diff_seconds, None)
+        """
+        if base is None or compare is None:
+            return True, None, None
+            
+        try:
+            base_ts = pd.Timestamp(base)
+            comp_ts = pd.Timestamp(compare)
+            diff = abs(comp_ts - base_ts)
+            
+            if diff <= tolerance:
+                return False, None, None
+                
+            return True, diff.total_seconds(), None
+            
+        except (ValueError, TypeError):
+            return True, None, None
+    
+    @staticmethod
+    def compare_string(base: Any, compare: Any, case_sensitive: bool = True) -> Tuple[bool, None, None]:
+        """Compare string values.
+        
+        Args:
+            base: Base value
+            compare: Comparison value
+            case_sensitive: Whether to perform case-sensitive comparison
+            
+        Returns:
+            Tuple of (is_different, None, None)
+        """
+        if base is None or compare is None:
+            return True, None, None
+            
+        try:
+            base_str = str(base)
+            comp_str = str(compare)
+            
+            if not case_sensitive:
+                base_str = base_str.lower()
+                comp_str = comp_str.lower()
+                
+            return base_str != comp_str, None, None
+            
+        except (ValueError, TypeError):
+            return True, None, None
+    
+    @staticmethod
+    def compare_list(base: Any, compare: Any) -> Tuple[bool, Optional[int], None]:
+        """Compare list values.
+        
+        Args:
+            base: Base value
+            compare: Comparison value
+            
+        Returns:
+            Tuple of (is_different, length_diff, None)
+        """
+        if base is None or compare is None:
+            return True, None, None
+            
+        try:
+            base_list = list(base)
+            comp_list = list(compare)
+            
+            if len(base_list) != len(comp_list):
+                return True, len(comp_list) - len(base_list), None
+                
+            return base_list != comp_list, 0, None
+            
+        except (ValueError, TypeError):
+            return True, None, None
+    
+    @staticmethod
+    def compare_struct(base: Any, compare: Any) -> Tuple[bool, Optional[List[str]], None]:
+        """Compare struct (dict-like) values.
+        
+        Args:
+            base: Base value
+            compare: Comparison value
+            
+        Returns:
+            Tuple of (is_different, differing_keys, None)
+        """
+        if base is None or compare is None:
+            return True, None, None
+            
+        try:
+            base_dict = dict(base)
+            comp_dict = dict(compare)
+            
+            if base_dict.keys() != comp_dict.keys():
+                # Sort keys for consistent order
+                diff_keys = sorted(set(comp_dict.keys()) ^ set(base_dict.keys()))
+                return True, diff_keys, None
+                
+            differing_keys = sorted(k for k in base_dict if base_dict[k] != comp_dict[k])
+            return bool(differing_keys), differing_keys or None, None
+            
+        except (ValueError, TypeError):
+            return True, None, None
+
 class TypeSupport:
     """Manages supported data types and validation."""
     
     SUPPORTED_TYPES: Set[pl.DataType] = {
+        # Numeric types
         pl.Int64, pl.Int32, pl.Float64, pl.Float32,
-        pl.Utf8, pl.Categorical, pl.Boolean, pl.Datetime
+        pl.UInt64, pl.UInt32, pl.UInt16, pl.UInt8,
+        pl.Int16, pl.Int8,
+        pl.Decimal,
+        
+        # String types
+        pl.Utf8, pl.Categorical,
+        
+        # Boolean type
+        pl.Boolean,
+        
+        # Date and time types
+        pl.Datetime, pl.Date, pl.Time, pl.Duration,
+        
+        # Special types
+        pl.Object,  # Required for some datetime operations
+        pl.List,    # For array-like columns
+        pl.Struct   # For nested data structures
     }
     
-    PLANNED_TYPES: Dict[pl.DataType, str] = {
-        pl.Date: "v1.1",
-        pl.Time: "v1.1",
-        pl.Duration: "v1.1",
-        pl.Decimal: "v1.2",
-        pl.UInt64: "v1.1",
-        pl.UInt32: "v1.1",
-        pl.UInt16: "v1.1",
-        pl.UInt8: "v1.1",
-        pl.Int16: "v1.1",
-        pl.Int8: "v1.1"
+    # Configuration for type-specific comparisons
+    NUMERIC_TOLERANCE = 1e-10  # Default tolerance for floating-point comparisons
+    DATETIME_TOLERANCE = pd.Timedelta(microseconds=1)  # Default tolerance for datetime comparisons
+    
+    # Type categories for specialized comparison logic
+    NUMERIC_TYPES = {
+        pl.Int64, pl.Int32, pl.Int16, pl.Int8,
+        pl.UInt64, pl.UInt32, pl.UInt16, pl.UInt8,
+        pl.Float64, pl.Float32, pl.Decimal
+    }
+    
+    DATETIME_TYPES = {
+        pl.Datetime, pl.Date, pl.Time, pl.Duration
+    }
+    
+    STRING_TYPES = {
+        pl.Utf8, pl.Categorical
+    }
+    
+    COMPLEX_TYPES = {
+        pl.List, pl.Struct
     }
     
     @classmethod
