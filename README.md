@@ -119,6 +119,8 @@ results.display_html()
 ```
 
 #### Large Dataset Comparison
+
+##### Basic Disk-Based Mode
 ```python
 # Configure for large datasets
 dc = DataCompare(
@@ -139,6 +141,41 @@ print(f"Found {results.total_differences} differences across {len(results.statis
 # Display summary in notebook
 results.display_html()
 ```
+
+##### Batch Processing for Very Large Datasets
+```python
+from polars_proc_compare.batch_utils import compare_in_batches
+
+# For datasets with many columns (100+), use batch processing
+results = compare_in_batches(
+    base_path="/dbfs/volumes/my_volume/base.parquet",
+    compare_path="/dbfs/volumes/my_volume/compare.parquet",
+    key_columns=["id"],
+    batch_size=50,                # Process 50 columns at a time
+    max_memory_percent=80.0,      # Run GC when memory usage exceeds 80%
+    chunk_size=10_000,            # Process 10k rows at a time
+    n_workers=4,                  # Use 4 parallel workers
+    max_memory_usage=2048,        # 2GB memory limit per batch
+    monitor_memory=True,          # Enable memory monitoring
+    verbose=True                  # Show progress messages
+)
+
+# Generate the same formatted reports
+results.to_html("/dbfs/volumes/my_volume/report.html")
+results.display_html()
+```
+
+The batch processing approach is recommended when:
+- Dataset has hundreds of columns
+- Available memory is limited
+- Processing needs to be more granular
+- You need better progress monitoring
+
+Batch processing maintains all features:
+- Same HTML report format
+- Interactive notebook display
+- Complete difference tracking
+- Memory-efficient operation
 
 #### Working with Volumes and Paths
 ```python
