@@ -104,126 +104,74 @@ Batch processing features:
 - Support for both file saving and notebook display
 - Optional temporary directory specification for sensitive data
 
-### Using in Databricks
+### Example Usage with Large Datasets
 
-#### Installation and Setup
 ```python
-# Install the package
-%pip install polars-proc-compare
-
-# Import libraries
 from polars_proc_compare import DataCompare
+from polars_proc_compare.batch_utils import compare_in_batches
+from pathlib import Path
 import polars as pl
-```
 
-#### Reading Data
-```python
-# From Delta tables
-base_df = pl.from_pandas(spark.table("base_table").toPandas())
-compare_df = pl.from_pandas(spark.table("compare_table").toPandas())
+# Set up directories
+output_dir = Path("path/to/output")
+temp_dir = Path("path/to/temp")
+output_dir.mkdir(parents=True, exist_ok=True)
+temp_dir.mkdir(parents=True, exist_ok=True)
 
-# From Parquet files on volumes
-base_df = pl.read_parquet("/dbfs/volumes/my_volume/base.parquet")
-compare_df = pl.read_parquet("/dbfs/volumes/my_volume/compare.parquet")
+# Configure timestamp for output files
+from datetime import datetime
+timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-# From Spark DataFrame with schema preservation
-from pyspark.sql.types import *
+# Run comparison with batch processing
+results = compare_in_batches(
+    base_path="path/to/base.parquet",
+    compare_path="path/to/compare.parquet",
+    key_columns=["id"],
+    batch_size=10,           # Process 10 columns at a time
+    chunk_size=2_000,        # Process 2k rows at a time
+    n_workers=1,             # Single worker to minimize memory
+    max_memory_usage=512,    # 512MB memory limit per batch
+    max_memory_percent=75.0, # Run GC at 75% memory usage
+    monitor_memory=True,     # Enable memory monitoring
+    verbose=True,           # Show progress messages
+    temp_dir=temp_dir       # Use specific temp directory
+)
 
-def spark_to_polars(spark_df):
-    # Convert complex types and preserve schema
-    for field in spark_df.schema.fields:
-        if isinstance(field.dataType, (ArrayType, MapType, StructType)):
-            spark_df = spark_df.withColumn(field.name, to_json(field.name))
-    return pl.from_pandas(spark_df.toPandas())
+# Save reports with timestamp
+html_path = output_dir / f"comparison_report_{timestamp}.html"
+csv_path = output_dir / f"differences_{timestamp}.csv"
 
-base_df = spark_to_polars(spark.table("complex_table"))
-```
-
-#### Basic Comparison
-```python
-# Set up paths on mounted volume
-volume_path = "/dbfs/volumes/my_volume/comparisons"
-html_path = f"{volume_path}/comparison_report.html"
-csv_path = f"{volume_path}/differences.csv"
-
-# Run comparison
-dc = DataCompare(base_df, compare_df, key_columns=["id"])
-results = dc.compare()
-
-# Save reports to volume
 results.to_html(html_path)
 results.to_csv(csv_path)
 
-# Display results directly in notebook
+# Display results in notebook (if in notebook environment)
 results.display_html()
 ```
 
-#### Large Dataset Comparison
-```python
-# Configure for large datasets with batch processing
-results = compare_in_batches(
-    base_path=f"/dbfs/volumes/my_volume/base.parquet",
-    compare_path=f"/dbfs/volumes/my_volume/compare.parquet",
-    key_columns=["id", "date"],
-    batch_size=10,                # Process 10 columns at a time
-    chunk_size=2_000,            # Process 2k rows at a time
-    n_workers=1,                 # Single worker to minimize memory
-    max_memory_usage=512,        # 512MB memory limit per batch
-    max_memory_percent=75.0,     # Run GC at 75% memory usage
-    monitor_memory=True,         # Enable memory monitoring
-    verbose=True                # Show progress messages
-)
+### Performance Tips
 
-# Display summary in notebook
-results.display_html()
-```
+1. **Memory Management**:
+   - Use batch processing for wide datasets (100+ columns)
+   - Enable memory monitoring to track usage
+   - Adjust batch and chunk sizes based on available memory
+   - Use a dedicated temp directory for better control
 
-#### Working with Volumes and Paths
-```python
-# Mount point access
-volume_path = "/dbfs/volumes/my_volume/comparisons"
+2. **File Formats**:
+   - Prefer Parquet format for large files
+   - Use column-based file formats for efficient column access
+   - Consider partitioning very large datasets
 
-# Create directories if needed
-import os
-os.makedirs(volume_path, exist_ok=True)
+3. **Processing Configuration**:
+   - Start with single worker (`n_workers=1`) for predictable memory usage
+   - Increase workers gradually if more performance is needed
+   - Monitor memory usage and adjust `max_memory_usage` accordingly
+   - Use smaller batch sizes for very wide datasets
 
-# Save outputs with timestamps
-from datetime import datetime
-timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-output_dir = f"{volume_path}/{timestamp}"
-os.makedirs(output_dir, exist_ok=True)
-
-# Save reports
-results.to_html(f"{output_dir}/report.html")
-results.to_csv(f"{output_dir}/differences.csv")
-```
-
-#### Important Notes for Databricks Usage
-
-1. **File Access**:
-   - Use `/dbfs` prefix for direct file operations
-   - Use regular paths (without `/dbfs`) for Spark operations
-   - Mount volumes for persistent storage
-
-2. **Memory Management**:
-   - Use batch processing for wide datasets
-   - Enable memory monitoring
-   - Monitor notebook memory usage in Spark UI
-
-3. **Performance Tips**:
-   - Prefer Parquet over CSV for large files
-   - Use appropriate cluster configurations
-   - Consider partitioning large datasets
-
-4. **Display and Reports**:
-   - HTML reports are interactive in notebooks
-   - Reports saved to volumes are accessible via file browser
+4. **Storage Management**:
    - Use timestamps in filenames for version tracking
-
-5. **Data Type Handling**:
-   - Convert complex Spark types before comparison
-   - Handle timezone-aware timestamps appropriately
-   - Consider schema differences between Spark and Polars
+   - Clean up temporary files when no longer needed
+   - Monitor disk space in temp directory
+   - Use appropriate permissions for sensitive data
 
 ## Output Format
 
