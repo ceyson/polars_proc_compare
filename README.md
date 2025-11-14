@@ -70,6 +70,11 @@ For datasets with many columns (e.g., 100+), you can use batch processing to red
 
 ```python
 from polars_proc_compare.batch_utils import compare_in_batches
+from pathlib import Path
+
+# Set up temporary directory (optional)
+tmp_dir = Path("path/to/your/temp/directory")
+tmp_dir.mkdir(parents=True, exist_ok=True)
 
 # Process large datasets in column batches
 results = compare_in_batches(
@@ -82,7 +87,8 @@ results = compare_in_batches(
     max_memory_usage=512,    # 512MB memory limit per batch
     max_memory_percent=75.0, # Run GC at 75% memory usage
     monitor_memory=True,     # Enable memory monitoring
-    verbose=True            # Show progress messages
+    verbose=True,           # Show progress messages
+    temp_dir=tmp_dir        # Optional: Use specific temp directory
 )
 
 # Generate the same reports as regular comparison
@@ -96,6 +102,7 @@ Batch processing features:
 - Show detailed progress as batches are processed
 - Generate the same HTML reports as regular comparison
 - Support for both file saving and notebook display
+- Optional temporary directory specification for sensitive data
 
 ### Using in Databricks
 
