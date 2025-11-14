@@ -21,6 +21,7 @@ A high-performance Python implementation of SAS PROC COMPARE functionality using
 - Memory-efficient operations using Polars LazyFrames
 - Dynamic chunk sizing based on dataset characteristics
 - Configurable memory limits and worker counts
+- Column-batch processing for very wide datasets
 
 ## Installation
 
@@ -54,8 +55,8 @@ results.to_csv('differences.csv')
 ```python
 # Compare with key columns and performance tuning
 dc = DataCompare(
-    base_df,
-    compare_df,
+    base_df=base_df,
+    compare_df=compare_df,
     key_columns=["id", "date"],      # Columns to use for matching rows
     chunk_size=100_000,             # Process data in chunks
     n_workers=8,                    # Number of parallel workers
@@ -63,6 +64,38 @@ dc = DataCompare(
     use_streaming=True             # Enable streaming for large datasets
 )
 ```
+
+### Batch Processing for Very Wide Datasets
+For datasets with many columns (e.g., 100+), you can use batch processing to reduce memory usage:
+
+```python
+from polars_proc_compare.batch_utils import compare_in_batches
+
+# Process large datasets in column batches
+results = compare_in_batches(
+    base_path="path/to/base.parquet",
+    compare_path="path/to/compare.parquet",
+    key_columns=["id"],
+    batch_size=10,           # Process 10 columns at a time
+    chunk_size=2_000,        # Process 2k rows at a time
+    n_workers=1,             # Single worker to minimize memory
+    max_memory_usage=512,    # 512MB memory limit per batch
+    max_memory_percent=75.0, # Run GC at 75% memory usage
+    monitor_memory=True,     # Enable memory monitoring
+    verbose=True            # Show progress messages
+)
+
+# Generate the same reports as regular comparison
+results.to_html("comparison.html")
+results.display_html()  # For Jupyter notebooks
+```
+
+Batch processing features:
+- Process columns in small batches to reduce memory usage
+- Monitor and manage memory usage with garbage collection
+- Show detailed progress as batches are processed
+- Generate the same HTML reports as regular comparison
+- Support for both file saving and notebook display
 
 ### Using in Databricks
 
@@ -119,63 +152,24 @@ results.display_html()
 ```
 
 #### Large Dataset Comparison
-
-##### Basic Disk-Based Mode
 ```python
-# Configure for large datasets
-dc = DataCompare(
-    base_df=f"/dbfs/volumes/my_volume/base.parquet",  # Path instead of DataFrame
-    compare_df=f"/dbfs/volumes/my_volume/compare.parquet",
+# Configure for large datasets with batch processing
+results = compare_in_batches(
+    base_path=f"/dbfs/volumes/my_volume/base.parquet",
+    compare_path=f"/dbfs/volumes/my_volume/compare.parquet",
     key_columns=["id", "date"],
-    disk_mode=True,                # Enable disk-based processing
-    optimize_dtypes=True,          # Enable memory optimization
-    max_memory_usage=4096,         # Set memory limit (MB)
-    temp_dir="/dbfs/volumes/my_volume/temp"  # Use volume for temp files
+    batch_size=10,                # Process 10 columns at a time
+    chunk_size=2_000,            # Process 2k rows at a time
+    n_workers=1,                 # Single worker to minimize memory
+    max_memory_usage=512,        # 512MB memory limit per batch
+    max_memory_percent=75.0,     # Run GC at 75% memory usage
+    monitor_memory=True,         # Enable memory monitoring
+    verbose=True                # Show progress messages
 )
-
-# Run comparison with progress tracking
-print("Starting comparison...")
-results = dc.compare()
-print(f"Found {results.total_differences} differences across {len(results.statistics)} columns")
 
 # Display summary in notebook
 results.display_html()
 ```
-
-##### Batch Processing for Very Large Datasets
-```python
-from polars_proc_compare.batch_utils import compare_in_batches
-
-# For datasets with many columns (100+), use batch processing
-results = compare_in_batches(
-    base_path="/dbfs/volumes/my_volume/base.parquet",
-    compare_path="/dbfs/volumes/my_volume/compare.parquet",
-    key_columns=["id"],
-    batch_size=50,                # Process 50 columns at a time
-    max_memory_percent=80.0,      # Run GC when memory usage exceeds 80%
-    chunk_size=10_000,            # Process 10k rows at a time
-    n_workers=4,                  # Use 4 parallel workers
-    max_memory_usage=2048,        # 2GB memory limit per batch
-    monitor_memory=True,          # Enable memory monitoring
-    verbose=True                  # Show progress messages
-)
-
-# Generate the same formatted reports
-results.to_html("/dbfs/volumes/my_volume/report.html")
-results.display_html()
-```
-
-The batch processing approach is recommended when:
-- Dataset has hundreds of columns
-- Available memory is limited
-- Processing needs to be more granular
-- You need better progress monitoring
-
-Batch processing maintains all features:
-- Same HTML report format
-- Interactive notebook display
-- Complete difference tracking
-- Memory-efficient operation
 
 #### Working with Volumes and Paths
 ```python
@@ -205,8 +199,8 @@ results.to_csv(f"{output_dir}/differences.csv")
    - Mount volumes for persistent storage
 
 2. **Memory Management**:
-   - Use `disk_mode=True` for large datasets
-   - Enable `optimize_dtypes` to reduce memory usage
+   - Use batch processing for wide datasets
+   - Enable memory monitoring
    - Monitor notebook memory usage in Spark UI
 
 3. **Performance Tips**:
@@ -254,6 +248,7 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
+
 ## Known Limitations
 
 ### Type Support
