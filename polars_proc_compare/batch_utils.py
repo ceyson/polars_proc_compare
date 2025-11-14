@@ -1,8 +1,11 @@
 """Utility functions for batch processing of large datasets."""
 
 import gc
+import os
+import uuid
 import psutil
-from typing import Dict, List
+from pathlib import Path
+from typing import Dict, List, Optional
 import polars as pl
 from polars_proc_compare.comparison_engine import DataCompare
 from polars_proc_compare.results import ComparisonResults
@@ -35,7 +38,8 @@ def compare_in_batches(
     n_workers: int = 4,
     max_memory_usage: int = 2048,
     monitor_memory: bool = True,
-    verbose: bool = True
+    verbose: bool = True,
+    temp_dir: Optional[Path] = None
 ) -> ComparisonResults:
     """Compare large datasets in column batches while maintaining report format.
 
@@ -79,7 +83,7 @@ def compare_in_batches(
     # Initialize a ComparisonResults object with structure info
     base_nrows = pl.read_parquet(base_path, columns=[key_columns[0]]).height
     compare_nrows = pl.read_parquet(compare_path, columns=[key_columns[0]]).height
-    
+
     # Calculate matched rows
     if key_columns:
         base_keys = set(pl.read_parquet(base_path, columns=key_columns).rows())
@@ -92,7 +96,7 @@ def compare_in_batches(
         matched_rows = min_rows
         base_only_rows = max(0, base_nrows - min_rows)
         compare_only_rows = max(0, compare_nrows - min_rows)
-    
+
     final_results = ComparisonResults()
     final_results.set_structure_results({
         'base_nrows': base_nrows,
@@ -124,10 +128,21 @@ def compare_in_batches(
         check_memory()
 
         try:
+            # Use provided temp directory or create one if not provided
+            if temp_dir is None:
+                import tempfile
+                batch_temp = Path(tempfile.mkdtemp(prefix='polars_compare_'))
+                cleanup_after = True
+            else:
+                # Use a unique subdirectory in the provided temp directory
+                batch_temp = temp_dir / str(uuid.uuid4())
+                batch_temp.mkdir(exist_ok=True)
+                cleanup_after = False  # Let the user manage their temp directory
+
             # Read only needed columns
             base_df = pl.read_parquet(base_path, columns=columns_to_read)
             compare_df = pl.read_parquet(compare_path, columns=columns_to_read)
-            
+
             dc = DataCompare(
                 base_df=base_df,
                 compare_df=compare_df,
@@ -136,11 +151,22 @@ def compare_in_batches(
                 chunk_size=chunk_size,
                 n_workers=n_workers,
                 max_memory_usage=max_memory_usage,
-                optimize_dtypes=True
+                optimize_dtypes=True,
+                temp_dir=str(batch_temp)
             )
 
             # Run comparison for this batch
             results = dc.compare()
+
+            # Clean up temp directory only if we created it
+            if cleanup_after:
+                try:
+                    import shutil
+                    if batch_temp.exists():
+                        shutil.rmtree(batch_temp)
+                except Exception as e:
+                    if verbose:
+                        print(f"Warning: Could not clean up temp directory: {e}")
 
             # Accumulate results
             all_differences.update(results.comparison_results)
