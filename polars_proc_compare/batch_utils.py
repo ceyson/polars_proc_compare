@@ -134,9 +134,10 @@ def compare_in_batches(
                 batch_temp = Path(tempfile.mkdtemp(prefix='polars_compare_'))
                 cleanup_after = True
             else:
-                # Use a unique subdirectory in the provided temp directory
-                batch_temp = temp_dir / str(uuid.uuid4())
-                batch_temp.mkdir(exist_ok=True)
+                # Use the provided temp directory directly
+                batch_temp = Path(temp_dir)
+                if not batch_temp.exists():
+                    batch_temp.mkdir(parents=True, exist_ok=True)
                 cleanup_after = False  # Let the user manage their temp directory
 
             # Read only needed columns
