@@ -69,31 +69,60 @@ dc = DataCompare(
 For datasets with many columns (e.g., 100+), you can use batch processing to reduce memory usage:
 
 ```python
-from polars_proc_compare.batch_utils import compare_in_batches
+from polars_proc_compare.batch_utils import compare_in_batches, get_memory_usage
 from pathlib import Path
+from datetime import datetime
 
-# Set up temporary directory (optional)
-tmp_dir = Path("path/to/your/temp/directory")
-tmp_dir.mkdir(parents=True, exist_ok=True)
+# Set up directories
+work_dir = Path("workspace/batch_demo")
+work_dir.mkdir(parents=True, exist_ok=True)
+
+data_dir = work_dir / "data"     # For parquet files
+temp_dir = work_dir / "temp"     # For temporary files
+output_dir = work_dir / "output" # For results
+
+for d in [data_dir, temp_dir, output_dir]:
+    d.mkdir(exist_ok=True)
+
+# Monitor memory usage
+def show_memory():
+    mem = get_memory_usage()
+    print(f"Used: {mem['used']:.1f} MB")
+    print(f"Available: {mem['available']:.1f} MB")
+    print(f"Percent: {mem['percent']:.1f}%")
 
 # Process large datasets in column batches
-results = compare_in_batches(
-    base_path="path/to/base.parquet",
-    compare_path="path/to/compare.parquet",
-    key_columns=["id"],
-    batch_size=10,           # Process 10 columns at a time
-    chunk_size=2_000,        # Process 2k rows at a time
-    n_workers=1,             # Single worker to minimize memory
-    max_memory_usage=512,    # 512MB memory limit per batch
-    max_memory_percent=75.0, # Run GC at 75% memory usage
-    monitor_memory=True,     # Enable memory monitoring
-    verbose=True,           # Show progress messages
-    temp_dir=tmp_dir        # Optional: Use specific temp directory
-)
+config = {
+    "base_path": str(data_dir / "base.parquet"),
+    "compare_path": str(data_dir / "compare.parquet"),
+    "key_columns": ["id"],
+    "batch_size": 10,           # Process 10 columns at a time
+    "chunk_size": 2_000,        # Process 2k rows at a time
+    "n_workers": 1,             # Single worker to minimize memory
+    "max_memory_usage": 512,    # 512MB memory limit per batch
+    "max_memory_percent": 75.0, # Run GC at 75% memory usage
+    "monitor_memory": True,     # Enable memory monitoring
+    "verbose": True,           # Show progress messages
+    "temp_dir": temp_dir       # Use specific temp directory
+}
 
-# Generate the same reports as regular comparison
-results.to_html("comparison.html")
-results.display_html()  # For Jupyter notebooks
+# Run comparison
+print("Initial memory state:")
+show_memory()
+
+results = compare_in_batches(**config)
+
+# Save results with timestamp
+timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+html_path = output_dir / f"comparison_{timestamp}.html"
+results.to_html(html_path)
+
+print("\nComparison Summary:")
+print(f"Total differences: {results.total_differences}")
+print(f"Columns with differences: {len(results.comparison_results)}")
+
+print("\nFinal memory state:")
+show_memory()
 ```
 
 Batch processing features:
@@ -102,7 +131,48 @@ Batch processing features:
 - Show detailed progress as batches are processed
 - Generate the same HTML reports as regular comparison
 - Support for both file saving and notebook display
-- Optional temporary directory specification for sensitive data
+- Organized directory structure for data management
+- Memory usage tracking throughout processing
+- Timestamped outputs for version tracking
+
+### Directory Structure
+Recommended directory structure for batch processing:
+```
+workspace/
+  └── batch_demo/
+      ├── data/      # Parquet files
+      ├── temp/      # Temporary processing files
+      └── output/    # Results and reports
+```
+
+### Memory Management
+Batch processing includes several memory optimization features:
+- Column batching: Process subsets of columns to reduce memory footprint
+- Data type optimization: Automatically downcast types where possible
+- Garbage collection: Triggered when memory usage exceeds threshold
+- Memory monitoring: Track usage throughout processing
+- Temporary file cleanup: Automatic cleanup after each batch
+
+### Performance Tips
+1. **Batch Size**:
+   - Start with small batches (10 columns) and adjust based on memory usage
+   - Monitor memory usage to find optimal batch size
+   - Consider column types when setting batch size
+
+2. **Workers**:
+   - Start with single worker for predictable memory usage
+   - Increase workers gradually if more performance needed
+   - Monitor memory impact when adding workers
+
+3. **Chunk Size**:
+   - Default 2,000 rows per chunk works well for most cases
+   - Adjust based on row size and available memory
+   - Smaller chunks for wider datasets
+
+4. **Memory Limits**:
+   - Set `max_memory_usage` based on available system memory
+   - Use `max_memory_percent` to trigger GC before system limits
+   - Monitor memory usage patterns during processing
 
 ### Example Usage with Large Datasets
 
