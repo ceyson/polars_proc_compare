@@ -128,17 +128,20 @@ def compare_in_batches(
         check_memory()
 
         try:
-            # Use provided temp directory or create one if not provided
+            # Create a unique temp directory for this batch
+            import tempfile
+            import uuid
+            
             if temp_dir is None:
-                import tempfile
+                # Use system temp directory
                 batch_temp = Path(tempfile.mkdtemp(prefix='polars_compare_'))
-                cleanup_after = True
             else:
-                # Use the provided temp directory directly
-                batch_temp = Path(temp_dir)
-                if not batch_temp.exists():
-                    batch_temp.mkdir(parents=True, exist_ok=True)
-                cleanup_after = False  # Let the user manage their temp directory
+                # Create a unique subdirectory in the provided temp directory
+                batch_temp = Path(temp_dir) / f"batch_{batch_num}_{uuid.uuid4()}"
+                batch_temp.mkdir(parents=True, exist_ok=True)
+            
+            # Always clean up batch-specific directories
+            cleanup_after = True
 
             # Read only needed columns
             base_df = pl.read_parquet(base_path, columns=columns_to_read)
